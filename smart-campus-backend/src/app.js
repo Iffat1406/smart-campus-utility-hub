@@ -14,6 +14,8 @@ const eventsRoutes = require("./components/campus-events/events.routes");
 const clubsRoutes = require("./components/campus-events/clubs.routes");
 const timetableRoutes = require("./components/timetable/timetable.routes");
 const electiveRoutes = require("./components/electives/elective.routes");
+const notificationsRoutes = require("./components/notifications/notifications.routes");
+const academicProgressRoutes = require("./components/academic-progress/academicProgress.routes");
 
 // Create Express application
 const app = express();
@@ -32,7 +34,10 @@ if (typeof trustProxySetting === "string" && trustProxySetting.trim() !== "") {
     app.set("trust proxy", false);
   } else {
     const trustProxyHops = Number(trustProxySetting);
-    app.set("trust proxy", Number.isNaN(trustProxyHops) ? trustProxySetting : trustProxyHops);
+    app.set(
+      "trust proxy",
+      Number.isNaN(trustProxyHops) ? trustProxySetting : trustProxyHops,
+    );
   }
 } else {
   app.set("trust proxy", false);
@@ -63,7 +68,11 @@ const corsOptions = {
       ? (process.env.CORS_ORIGINS || "")
           .split(",")
           .map((origin) => origin.trim())
-      : ["http://localhost:5173", "http://localhost:3000", "http://localhost:8080"], // Only Vite dev server in development
+      : [
+          "http://localhost:5173",
+          "http://localhost:3000",
+          "http://localhost:8080",
+        ], // Only Vite dev server in development
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
@@ -141,6 +150,12 @@ app.use("/api/timetable", timetableRoutes);
 
 // Electives routes
 app.use("/api/electives", electiveRoutes);
+
+// Notifications routes
+app.use("/api/notifications", notificationsRoutes);
+
+// Academic Progress routes
+app.use("/api/academic-progress", academicProgressRoutes);
 
 // =====================================================================
 // ERROR HANDLING

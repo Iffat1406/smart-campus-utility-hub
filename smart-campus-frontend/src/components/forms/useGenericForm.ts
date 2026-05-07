@@ -32,8 +32,6 @@ export const useGenericForm = (
   // Tracks which fields the user has interacted with
   const [touchedFields, setTouchedFields] = useState<Record<string, boolean>>({});
 
-  // Abort controller so in-flight requests can be cancelled on unmount
-  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Build validation schema from fields if not provided
   const buildDefaultSchema = () => {

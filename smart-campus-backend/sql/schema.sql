@@ -269,8 +269,62 @@ CREATE TABLE timetable_slots (
 );
 
 -- =====================================================================
+-- 16. NOTIFICATIONS (Real-time notifications for students)
+-- =====================================================================
+CREATE TABLE notifications (
+    id SERIAL PRIMARY KEY,
+    student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title VARCHAR(150) NOT NULL,
+    message TEXT NOT NULL,
+    notification_type VARCHAR(50) NOT NULL, -- 'event', 'timetable', 'elective', 'announcement'
+    related_id INTEGER, -- References event_id, timetable_id, etc.
+    is_read BOOLEAN DEFAULT false,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    read_at TIMESTAMP
+);
+
+-- =====================================================================
+-- 17. STUDENT ACADEMIC PROGRESS (GPA tracking)
+-- =====================================================================
+CREATE TABLE student_academic_progress (
+    id SERIAL PRIMARY KEY,
+    student_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    current_gpa DECIMAL(3,2) CHECK (current_gpa >= 0 AND current_gpa <= 10),
+    semester_gpa DECIMAL(3,2) CHECK (semester_gpa >= 0 AND semester_gpa <= 10),
+    current_semester INTEGER DEFAULT 1,
+    total_credits INTEGER DEFAULT 0,
+    credits_earned INTEGER DEFAULT 0,
+    courses_completed INTEGER DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =====================================================================
+-- 18. STUDENT GPA HISTORY (For trend tracking)
+-- =====================================================================
+CREATE TABLE student_gpa_history (
+    id SERIAL PRIMARY KEY,
+    student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    semester INTEGER NOT NULL,
+    gpa DECIMAL(3,2) NOT NULL CHECK (gpa >= 0 AND gpa <= 10),
+    academic_year VARCHAR(10),
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(student_id, semester, academic_year)
+);
+
+-- =====================================================================
 -- INDEXES FOR PERFORMANCE OPTIMIZATION
 -- =====================================================================
+
+-- Notification indexes
+CREATE INDEX idx_notifications_student ON notifications(student_id);
+CREATE INDEX idx_notifications_read ON notifications(is_read);
+CREATE INDEX idx_notifications_type ON notifications(notification_type);
+CREATE INDEX idx_notifications_created ON notifications(created_at);
+
+-- Academic progress indexes
+CREATE INDEX idx_student_progress_gpa ON student_academic_progress(current_gpa);
+CREATE INDEX idx_gpa_history_student ON student_gpa_history(student_id);
+CREATE INDEX idx_gpa_history_semester ON student_gpa_history(semester);
 
 -- Users indexes
 CREATE INDEX idx_users_email ON users(email);

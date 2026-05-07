@@ -48,10 +48,58 @@ const createEvent = asyncHandler(async (req, res) => {
     throw new ApiError(500, "Failed to create event");
   }
 
+  const eventId = result.rows[0].id;
+
   logger.info("Event created", {
-    eventId: result.rows[0].id,
+    eventId: eventId,
     createdBy: req.user.id,
   });
+
+  // Create notifications for relevant students (non-blocking)
+  try {
+    let studentQuery = "SELECT id FROM users WHERE role = 'student'";
+    const studentParams = [];
+
+    if (target_department) {
+      studentQuery += " AND department = $1";
+      studentParams.push(target_department);
+    }
+
+    const studentResult = await query(studentQuery, studentParams);
+    const studentIds = studentResult.rows.map((row) => row.id);
+
+    if (studentIds.length > 0) {
+      const notificationMsg = `New event: "${title}" - ${description ? description.substring(0, 100) : "Click for details"}`;
+      const notificationTitle = `New Event: ${title}`;
+
+      // Insert notifications for each student
+      for (const studentId of studentIds) {
+        const notificationSql = `
+          INSERT INTO notifications (student_id, title, message, notification_type, related_id)
+          VALUES ($1, $2, $3, $4, $5)
+        `;
+
+        await query(notificationSql, [
+          studentId,
+          notificationTitle,
+          notificationMsg,
+          "event",
+          eventId,
+        ]);
+      }
+
+      logger.info("Event notifications created", {
+        eventId: eventId,
+        studentCount: studentIds.length,
+      });
+    }
+  } catch (notifError) {
+    logger.error("Failed to create event notifications", {
+      eventId: eventId,
+      error: notifError.message,
+    });
+    // Don't fail the event creation if notifications fail
+  }
 
   sendSuccess(res, 201, "Event created successfully", {
     event: result.rows[0],
@@ -90,22 +138,25 @@ const getAllEvents = asyncHandler(async (req, res) => {
 
   const offset = (pageNum - 1) * limitNum;
 
-  const allowedSortFields = ['start_time', 'title', 'created_at'];
-  const allowedOrders = ['ASC', 'DESC'];
-  const sortField = allowedSortFields.includes(sort) ? sort : 'start_time';
-  const sortOrder = allowedOrders.includes(order.toUpperCase()) ? order.toUpperCase() : 'ASC';
+  const allowedSortFields = ["start_time", "title", "created_at"];
+  const allowedOrders = ["ASC", "DESC"];
+  const sortField = allowedSortFields.includes(sort) ? sort : "start_time";
+  const sortOrder = allowedOrders.includes(order.toUpperCase())
+    ? order.toUpperCase()
+    : "ASC";
 
   // Map allowed sort fields to fully-qualified, safe SQL identifiers.
   const sortFieldMap = {
-    start_time: 'e.start_time',
-    title: 'e.title',
-    created_at: 'e.created_at',
+    start_time: "e.start_time",
+    title: "e.title",
+    created_at: "e.created_at",
   };
 
   // Ensure we always use a safe, whitelisted column name for ORDER BY.
-  const safeSortField = sortFieldMap[sortField] || 'e.start_time';
-  
-  let sql = 'SELECT e.*, c.name as club_name, COUNT(*) OVER() as total_count FROM events e LEFT JOIN clubs c ON e.club_id = c.id WHERE 1=1';
+  const safeSortField = sortFieldMap[sortField] || "e.start_time";
+
+  let sql =
+    "SELECT e.*, c.name as club_name, COUNT(*) OVER() as total_count FROM events e LEFT JOIN clubs c ON e.club_id = c.id WHERE 1=1";
   const values = [];
   let paramCounter = 1;
 
@@ -142,13 +193,13 @@ const getAllEvents = asyncHandler(async (req, res) => {
   }
 
   // Filter featured events
-  if (is_featured === 'true') {
-    sql += ' AND e.is_featured = true';
+  if (is_featured === "true") {
+    sql += " AND e.is_featured = true";
   }
 
   // Filter upcoming events only
-  if (upcoming === 'true') {
-    sql += ' AND e.start_time > NOW()';
+  if (upcoming === "true") {
+    sql += " AND e.start_time > NOW()";
   }
 
   sql += ` ORDER BY ${safeSortField} ${sortOrder}`;
@@ -156,9 +207,10 @@ const getAllEvents = asyncHandler(async (req, res) => {
   values.push(limitNum, offset);
 
   const result = await query(sql, values);
-  const total = result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0;
-  
-  sendSuccess(res, 200, 'Events fetched successfully', {
+  const total =
+    result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0;
+
+  sendSuccess(res, 200, "Events fetched successfully", {
     events: result.rows,
     pagination: {
       page: pageNum,

@@ -6,6 +6,7 @@ import { EventFormData } from '@/types';
 import { GenericFormModal } from './GenericFormModal';
 import { FieldConfig } from './types';
 import { eventSchema } from '@/lib/validationSchemas';
+import { z } from 'zod';
 
 interface EventFormProps {
   onSuccess: () => void;
