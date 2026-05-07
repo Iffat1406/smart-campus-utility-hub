@@ -1,13 +1,11 @@
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { eventsService } from '@/services/eventService';
 import { clubService, Club } from '@/services/clubService';
-import { ApiError, EventFormData } from '@/types';
+import { EventFormData } from '@/types';
+import { GenericFormModal } from './GenericFormModal';
+import { FieldConfig } from './types';
+import { eventSchema } from '@/lib/validationSchemas';
 
 interface EventFormProps {
   onSuccess: () => void;
@@ -18,17 +16,6 @@ interface EventFormProps {
 export const EventForm = ({ onSuccess, onCancel, initialData }: EventFormProps) => {
   const [clubs, setClubs] = useState<Club[]>([]);
   const [isLoadingClubs, setIsLoadingClubs] = useState(true);
-  const [formData, setFormData] = useState({
-    title: initialData?.title || '',
-    description: initialData?.description || '',
-    location: initialData?.location || '',
-    start_time: initialData?.start_time || '',
-    end_time: initialData?.end_time || '',
-    club_id: initialData?.club_id || '',
-    target_department: initialData?.target_department || '',
-    is_featured: initialData?.is_featured || false,
-    tags: initialData?.tags || [],
-  });
 
   useEffect(() => {
     loadClubs();
@@ -41,191 +28,190 @@ export const EventForm = ({ onSuccess, onCancel, initialData }: EventFormProps) 
       setClubs(clubsList);
     } catch (error) {
       console.error('Failed to load clubs', error);
+      toast.error('Failed to load clubs');
     } finally {
       setIsLoadingClubs(false);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      // Convert tags string to array if needed
-      const payload = {
-        ...formData,
-        tags: Array.isArray(formData.tags) 
-          ? formData.tags 
-          : (typeof formData.tags === 'string' 
-              ? formData.tags.split(',').map(t => t.trim()).filter(t => t)
-              : [])
-      };
+  const fields: FieldConfig[] = [
+    {
+      id: 'title',
+      label: 'Event Title',
+      type: 'text',
+      required: true,
+      gridCol: 1,
+    },
+    {
+      id: 'description',
+      label: 'Description',
+      type: 'textarea',
+      required: true,
+      gridCol: 1,
+    },
+    {
+      id: 'location',
+      label: 'Location',
+      type: 'text',
+      required: true,
+      gridCol: 1,
+    },
+    {
+      id: 'club_id',
+      label: 'Associated Club',
+      type: 'select',
+      required: true,
+      options: clubs.map(club => ({ value: club.id.toString(), label: club.name })),
+      disabled: isLoadingClubs,
+      gridCol: 1,
+    },
+    {
+      id: 'start_time',
+      label: 'Start Time',
+      type: 'datetime-local',
+      required: true,
+      gridCol: 1,
+    },
+    {
+      id: 'end_time',
+      label: 'End Time',
+      type: 'datetime-local',
+      required: true,
+      gridCol: 1,
+      hint: 'Must be after the start time',
+    },
+    {
+      id: 'target_department',
+      label: 'Target Department',
+      type: 'text',
+      required: false,
+      placeholder: 'e.g. Computer Science (leave blank for all)',
+      gridCol: 1,
+    },
+    {
+      id: 'tags',
+      label: 'Tags',
+      type: 'text',
+      required: false,
+      placeholder: 'e.g. tech, workshop, open-to-all',
+      hint: 'Comma-separated. Each tag will be trimmed automatically.',
+      gridCol: 1,
+    },
+    {
+      id: 'is_featured',
+      label: 'Featured Event',
+      type: 'checkbox',
+      required: false,
+      gridCol: 1,
+    },
+  ];
 
-      if (initialData?.id) {
-        await eventsService.update(initialData.id, payload);
-        toast.success('Event updated successfully!');
-      } else {
-        await eventsService.create(payload);
-        toast.success('Event created successfully!');
+  const validationSchema = z
+    .object({
+      title: z
+        .string()
+        .transform((v) => v.trim())
+        .pipe(z.string().min(1, 'Event title is required')),
+      description: z
+        .string()
+        .transform((v) => v.trim())
+        .pipe(z.string().min(1, 'Description is required')),
+      location: z
+        .string()
+        .transform((v) => v.trim())
+        .pipe(z.string().min(1, 'Location is required')),
+      club_id: z.string().min(1, 'Associated club is required'),
+      start_time: z.string().min(1, 'Start time is required'),
+      end_time: z.string().min(1, 'End time is required'),
+      target_department: z
+        .string()
+        .transform((v) => v.trim())
+        .optional(),
+      // Accept either a raw comma-string (from the text input) or an already
+      // normalised array so the form works correctly in both create and edit mode.
+      tags: z
+        .union([
+          z.array(z.string()),
+          z
+            .string()
+            .optional()
+            .transform((v) =>
+              v
+                ? v
+                    .split(',')
+                    .map((t) => t.trim())
+                    .filter(Boolean)
+                : []
+            ),
+        ])
+        .optional(),
+      is_featured: z.boolean().optional(),
+    })
+    .superRefine((data, ctx) => {
+      if (data.start_time && data.end_time) {
+        const start = new Date(data.start_time);
+        const end = new Date(data.end_time);
+        if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && end <= start) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'End time must be after the start time',
+            path: ['end_time'],
+          });
+        }
       }
-      onSuccess();
-    } catch (error: unknown) {
-      const err = error as ApiError;
-      toast.error(err?.message || 'Failed to save event');
+    });
+
+  const customSubmitHandler = async (data: any, isUpdate: boolean) => {
+    const normalizeTags = (raw: unknown): string[] => {
+      if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+      if (typeof raw === 'string')
+        return raw
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean);
+      return [];
+    };
+
+    const payload = {
+      ...data,
+      title: typeof data.title === 'string' ? data.title.trim() : data.title,
+      description:
+        typeof data.description === 'string'
+          ? data.description.trim()
+          : data.description,
+      location:
+        typeof data.location === 'string' ? data.location.trim() : data.location,
+      club_id: parseInt(data.club_id, 10),
+      tags: normalizeTags(data.tags),
+    };
+
+    if (isUpdate) {
+      await eventsService.update(initialData!.id, payload);
+      toast.success('Event updated successfully!');
+    } else {
+      await eventsService.create(payload);
+      toast.success('Event created successfully!');
     }
   };
 
+  if (clubs.length === 0 && !isLoadingClubs) {
+    return (
+      <div className="p-4 bg-yellow-500/10 border border-yellow-500/50 rounded-lg text-yellow-600">
+        ⚠️ No clubs available. Please create a club first before creating an event.
+      </div>
+    );
+  }
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="space-y-2">
-        <Label htmlFor="title">Event Title *</Label>
-        <Input
-          id="title"
-          name="title"
-          value={formData.title}
-          onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-          required
-          className="glass"
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="description">Description *</Label>
-        <Textarea
-          id="description"
-          name="description"
-          value={formData.description}
-          onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-          required
-          className="glass min-h-[100px]"
-        />
-      </div>
-
-      <div className="grid md:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="location">Location *</Label>
-          <Input
-            id="location"
-            name="location"
-            value={formData.location}
-            onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-            required
-            className="glass"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="club_id">Associated Club *</Label>
-          <select
-            id="club_id"
-            name="club_id"
-            value={formData.club_id || ''}
-            onChange={(e) => setFormData({ ...formData, club_id: e.target.value ? parseInt(e.target.value) : '' })}
-            required
-            disabled={isLoadingClubs}
-            className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-          >
-            <option value="">
-              {isLoadingClubs ? 'Loading clubs...' : 'Select a club...'}
-            </option>
-            {clubs.map(club => (
-              <option key={club.id} value={club.id}>
-                {club.name}
-              </option>
-            ))}
-          </select>
-          {clubs.length === 0 && !isLoadingClubs && (
-            <p className="text-xs text-red-600">No clubs available. Create a club first.</p>
-          )}
-        </div>
-      </div>
-
-      <div className="grid md:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="start_time">Start Time *</Label>
-          <Input
-            id="start_time"
-            name="start_time"
-            type="datetime-local"
-            value={formData.start_time}
-            onChange={(e) => setFormData({ ...formData, start_time: e.target.value })}
-            required
-            className="glass"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="end_time">End Time *</Label>
-          <Input
-            id="end_time"
-            name="end_time"
-            type="datetime-local"
-            value={formData.end_time}
-            onChange={(e) => setFormData({ ...formData, end_time: e.target.value })}
-            required
-            className="glass"
-          />
-        </div>
-      </div>
-
-      <div className="grid md:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="target_department">Target Department</Label>
-          <Input
-            id="target_department"
-            name="target_department"
-            value={formData.target_department}
-            onChange={(e) => setFormData({ ...formData, target_department: e.target.value })}
-            className="glass"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="tags">Tags (comma-separated)</Label>
-          <Input
-            id="tags"
-            name="tags"
-            value={Array.isArray(formData.tags) ? formData.tags.join(', ') : formData.tags}
-            onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
-            className="glass"
-          />
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          id="is_featured"
-          name="is_featured"
-          checked={formData.is_featured}
-          onChange={(e) => setFormData({ ...formData, is_featured: e.target.checked })}
-          className="h-4 w-4"
-        />
-        <Label htmlFor="is_featured" className="cursor-pointer">
-          Featured Event
-        </Label>
-      </div>
-
-      <div className="flex gap-3 pt-4">
-        <Button
-          type="submit"
-          className="flex-1 bg-primary text-primary-foreground font-semibold glow-primary-hover"
-          asChild
-        >
-          <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-            {initialData?.id ? 'Update Event' : 'Create Event'}
-          </motion.button>
-        </Button>
-        <Button
-          type="button"
-          onClick={onCancel}
-          variant="outline"
-          className="flex-1"
-          asChild
-        >
-          <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-            Cancel
-          </motion.button>
-        </Button>
-      </div>
-    </form>
+    <GenericFormModal
+      fields={fields}
+      service={eventsService}
+      initialData={initialData}
+      onSuccess={onSuccess}
+      onCancel={onCancel}
+      validationSchema={eventSchema}
+      title="Event"
+      customSubmitHandler={customSubmitHandler}
+    />
   );
 };
